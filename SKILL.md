@@ -31,7 +31,23 @@ Validate a known directory before resuming:
 python <skill-directory>/scripts/workspace.py reuse --root <workspace-root> --agent <agent-name> --directory <known-directory> --task-id <known-task-id>
 ```
 
-Preserve both values during context compaction and handoff. If ownership is uncertain, allocate a new directory; never choose the newest directory or inspect another task's files to claim it. Retain `workspace.json`. Agent names must match exactly on reuse; metadata is an ownership check, not authentication.
+Preserve both values during context compaction and handoff. Retain `workspace.json`. Agent names must match exactly on reuse; cross-agent takeover is not implicit. Metadata is an ownership check, not authentication.
+
+## Find a previous task
+
+When the user explicitly asks to continue a previous task but has no path or ID, query only task metadata:
+
+```text
+python <skill-directory>/scripts/workspace.py list --root <workspace-root> --agent <agent-name> --limit 10
+```
+
+The bounded, read-only query returns names, IDs, creation times and current absolute directories; it does not list task files or read their contents. Check `scan_complete` and warnings. Do not silently choose the newest task or adopt a similarly named task. Ask the user to select when candidates are ambiguous. Never inspect other tasks' content to infer ownership. If no task can be identified, allocate a new directory rather than guessing.
+
+Once the task is selected, `reuse` also accepts `--task-id <known-id>` without `--directory`. ID lookup stays within the selected workspace and fails on ambiguity, incomplete scans or invalid entries. A known directory can be used directly to avoid unrelated scan warnings.
+
+Version 0.2 metadata stores a workspace ID and a relative directory. After moving a workspace, use its current root and task ID to obtain a new absolute directory. Do not follow stale absolute paths saved in old chat context. Copies retain the workspace identity; the selected root determines which copy is used. This does not synchronize copies or resolve simultaneous edits.
+
+Legacy metadata remains readable in its original location. Upgrading metadata is a separately requested maintenance operation with backups; never run bulk upgrades implicitly during ordinary tasks. See the repository README for `upgrade` and restore commands.
 
 ## Keep task file operations together
 

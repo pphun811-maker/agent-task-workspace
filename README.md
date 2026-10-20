@@ -6,6 +6,8 @@ One shared workspace for miscellaneous agent work. One directory per independent
 
 Give your agents a place to do small jobs without scattering scripts, downloads, screenshots and reports across a shared root. This skill lets agents decide when files are needed, then allocate and reuse a task directory. It works with any workspace name and any agent that can read Markdown instructions and run Python.
 
+Version 0.2 adds movable workspace metadata, read-only task discovery, ID-based reuse, and explicit backed-up upgrades from v0.1 or the original PowerShell metadata format.
+
 ```text
 your-workspace/
   AGENTS.md
@@ -56,7 +58,53 @@ Output is one JSON object with `directory`, `task_id`, and `reused: false`. On a
 python .agents/skills/agent-task-workspace/scripts/workspace.py reuse --root . --agent codex --directory "<returned-directory>" --task-id "<returned-task-id>"
 ```
 
-Successful reuse returns `reused: true` without changing metadata or allocating a new directory. Agent names match exactly. If `--root` is omitted, the script searches upward from the process working directory. Supplying `--root` still requires an initialized marker; it never opts in a project implicitly. Moving a workspace changes absolute metadata paths; old task directories require deliberate migration, not automatic adoption.
+Successful reuse returns `reused: true` without changing metadata or allocating a new directory. Agent names match exactly. If `--root` is omitted, the script searches upward from the process working directory. Supplying `--root` still requires an initialized marker; it never opts in a project implicitly.
+
+## Find and resume a previous task
+
+When the user asks to continue old work, list metadata candidates:
+
+```sh
+python .agents/skills/agent-task-workspace/scripts/workspace.py list --root . --agent codex --limit 10
+```
+
+The output includes task IDs, original names, agent names, timestamps, current absolute paths and metadata schema versions. It does not enumerate files inside task directories or read their content. Omit `--agent` for an explicitly requested workspace-wide search. `--limit` defaults to 10 (maximum 1000). The scan visits at most 1000 direct container entries by default; `--scan-limit` can be increased up to 100000. Check `scan_complete`: on an incomplete scan, results are the newest among the scanned candidates, not necessarily the whole workspace. Invalid or oversized metadata is reported in warnings (first 20, with a total `warning_count`); file reads are capped at 64 KiB per task marker.
+
+Ask the user to choose if candidates are ambiguous. Then resume by ID:
+
+```sh
+python .agents/skills/agent-task-workspace/scripts/workspace.py reuse --root . --agent codex --task-id "<selected-task-id>"
+```
+
+ID lookup refuses duplicate IDs, scan warnings, incomplete scans, missing IDs, and mismatched agent names. A known `--directory` can still be used directly, with an optional ID check. Selection never transfers ownership between agents automatically.
+
+## Move or copy a workspace
+
+Schema 2 records a stable `workspace_id` in the root marker, and that ID plus a workspace-relative directory in each task marker. Runtime output still uses absolute paths. Move the whole workspace, then pass its new root and the existing task ID to `reuse`; there is no absolute metadata prefix to rewrite.
+
+Copying a workspace preserves its identity. Reuse resolves only inside the root you select, not another copy on your machine. This is not synchronization, authentication, or conflict resolution. Old absolute paths remembered by a chat do not update themselves; resolve by task ID after moving. Do not rename the task container or individual task directories without a separate migration plan.
+
+## Upgrade an existing installation
+
+Stop active writers and back up your installed skill before replacing it. Keep the installation path if other agents already reference it; upgrade code in place instead of installing a second conflicting skill. Existing chats should explicitly reread the updated instructions; opening a new chat is recommended to refresh skill discovery metadata.
+
+`init` never silently upgrades an existing v0.1 marker. Legacy task metadata remains readable at its original location, but creating new tasks in a schema-1 workspace requires an explicit upgrade:
+
+```sh
+python .agents/skills/agent-task-workspace/scripts/workspace.py upgrade --root . --backup-dir "agent-work/metadata-upgrade-backup"
+```
+
+The backup path must not exist. The command validates the bounded metadata scan, backs up original bytes, and replaces only workspace/task metadata. It does not move task content or alter ACLs. Invalid metadata, duplicate task IDs or incomplete scans abort before changing metadata. Repeat after a successful upgrade is a no-op. Caught write failures trigger rollback; a process kill or power loss can require manual recovery from the saved bytes. Inspect a stale `.agent-workspace.lock` only after confirming its writer has stopped.
+
+For the original workspace-specific PowerShell installation that has no marker, explicitly add `--adopt-legacy` (and `--tasks-dir` if needed). Original camelCase metadata is supported when its absolute directory still matches. Directories without `workspace.json`, such as permission-repair backups, are left alone. Upgrade before moving legacy workspaces; mismatched old absolute locations are not adopted automatically.
+
+Each completed upgrade provides `manifest.json`, original metadata files and a standalone copy of the allocator for restoration:
+
+```sh
+python "agent-work/metadata-upgrade-backup/restore-workspace.py" restore --root . --backup-dir "agent-work/metadata-upgrade-backup"
+```
+
+Restore requires the original workspace location, unchanged upgraded metadata and the same managed task set. It refuses after new tasks are created or metadata is edited, rather than overwriting newer work. The backup restores metadata bytes, not task content or OS permissions. Keep the backup private and do not commit it.
 
 ## Behavior and boundaries
 
@@ -65,9 +113,9 @@ Successful reuse returns `reused: true` without changing metadata or allocating 
 - Existing projects may be edited in place when requested. Explicit destinations, normal agent shared configuration/memory locations and requested shared-rule maintenance remain exceptions.
 - Allocation failures report the original error and stop dependent writes. The skill does not investigate the host, repair permissions or bypass a sandbox automatically.
 - Path and metadata checks prevent common mistakes, not hostile actors. Symlinks, Windows junctions and other reparse paths are deliberately rejected, including in ancestor components. Choose the physical path when an OS exposes a directory through a link (for example, `/private/tmp` rather than `/tmp` on macOS). Ownership metadata is not authentication. No cross-task confidentiality or OS write isolation is provided.
-- Concurrent task allocations use exclusive UUID-named directories. Initialization and instruction updates should run once, not concurrently.
+- Concurrent task allocations use exclusive UUID-named directories and a short-lived workspace mutation lock. Contention waits for up to five seconds; read-only commands report an active lock instead of inspecting a migration mid-flight. Initialization and instruction updates should run once, not concurrently. This is local-process coordination, not a distributed lock for cloud-sync folders.
 
-This is a portable successor to a workspace-specific skill. It intentionally uses a new marker and metadata schema; it does not silently adopt directories created by earlier scripts. Keep older configurations until existing tasks are finished; do not install two contradictory workspace rules at once.
+Explicit upgrade is the only bulk metadata migration path. Regular list/reuse calls do not rewrite old metadata or claim unmanaged directories. No automatic cleanup, archiving, cross-agent takeover or hooks are included.
 
 ## Acceptance test
 

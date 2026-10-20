@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 /.agent-workspace.json
+/.agent-workspace.lock
 /agent-work/
 /dist/
 .DS_Store
