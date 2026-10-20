@@ -1,0 +1,5 @@
+interface:
+  display_name: "Agent Task Workspace"
+  short_description: "Keep miscellaneous agent tasks in separate folders"
+policy:
+  allow_implicit_invocation: true
